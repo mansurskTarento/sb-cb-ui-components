@@ -8,6 +8,10 @@
   color: #f3962f !important;
 }
 
+.primary-icon {
+  color: #1B4CA1 !important;
+}
+
 .dexcription {
   /* stylelint-disable */
   font-family: Lato;
@@ -52,4 +56,24 @@
   /* stylelint-enable */
   min-width: 90px;
   background-color: #ffffff !important;
+}
+
+.width-full {
+  width: 100% !important;
+}
+
+.dialog-title {
+  color: #1B2133;
+  text-align: center;
+  /* stylelint-disable */
+  font: 600 14px 'Montserrat';
+  /* stylelint-enable */
+}
+
+.dialog-description {
+  color: rgba(0, 0, 0, 0.60);
+  text-align: center;
+  /* stylelint-disable */
+  font: 400 14px 'Lato';
+  /* stylelint-enable */
 }

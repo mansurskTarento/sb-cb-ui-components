@@ -9,6 +9,10 @@ type DialogData = {
   type?: string;
   buttonsPositionClass?: string;
   planeDescription?: string;
+  messages?: {
+    message: string;
+    classes?: string
+  }[];
   buttons?: {
     classes?: string;
     text?: string;
