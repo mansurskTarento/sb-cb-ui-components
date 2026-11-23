@@ -6,8 +6,51 @@ import { HttpClientTestingModule } from '@angular/common/http/testing';
 
 import { EntitySelectionsComponent } from './entity-selections.component';
 import { NsAccessControlConfig } from '../../../_models/access-control.model';
-import { ALL_ORGANISATIONS_SELECTION, MAX_ORGANISATION_SELECTIONS } from '../../../_constants/app.constants';
+import { ALL_ORGANISATIONS_SELECTION, MAX_ORGANISATION_SELECTIONS, SPV_MAX_SELECTIONS } from '../../../_constants/app.constants';
 import { AccessControlService } from '../../../_services/access-control.service';
+import { CadreMappingService } from '../../../_services/cadre-mapping.service';
+
+/** Trimmed copy of the cadreConfig system setting, in its published shape. */
+const CADRE_CONFIG_FIXTURE: any = {
+  civilServiceType: {
+    civilServiceTypeList: [
+      {
+        id: 'cst-001', name: 'All India Services',
+        serviceList: [
+          { id: 'cs-001', name: 'Indian Administrative Service (IAS)', cadreControllingAuthority: 'Department of Personnel and Training', commonBatchStartYear: 2000, commonBatchEndYear: 2001, cadreList: [] },
+          { id: 'cs-002', name: 'Indian Police Service (IPS)', cadreControllingAuthority: 'Ministry of Home Affairs', commonBatchStartYear: 2000, commonBatchEndYear: 2001, cadreList: [] }
+        ]
+      },
+      {
+        id: 'cst-002', name: 'Central Civil Service',
+        serviceList: [
+          { id: 'cs-004', name: 'Indian Railway Service', cadreControllingAuthority: 'Ministry of Railways', commonBatchStartYear: 2000, commonBatchEndYear: 2001, cadreList: [] },
+          { id: 'cs-030', name: 'Indian Railway Accounts Service', cadreControllingAuthority: 'Railway Board', commonBatchStartYear: 2000, commonBatchEndYear: 2001, cadreList: [] },
+          { id: 'cs-040', name: 'DANICS', cadreControllingAuthority: 'Ministry of Home Affairs', commonBatchStartYear: 2000, commonBatchEndYear: 2001, cadreList: [] },
+          { id: 'cs-043', name: 'Central Secretariat Stenographers Service', cadreControllingAuthority: 'Department of Personnel and Training (DOPT)', commonBatchStartYear: 2000, commonBatchEndYear: 2001, cadreList: [] },
+          { id: 'cs-003', name: 'Indian Forest Service (IFoS)', cadreControllingAuthority: 'Ministry of Environment & Forests', commonBatchStartYear: 2000, commonBatchEndYear: 2001, cadreList: [] }
+        ]
+      },
+      {
+        id: 'cst-003', name: 'State Service',
+        states: [
+          {
+            id: 'st-bihar', name: 'Bihar',
+            serviceList: [
+              { id: 'cs-101', name: 'Bihar Administrative Service (BAS)', cadreControllingAuthority: 'Government of Bihar', commonBatchStartYear: 2000, commonBatchEndYear: 2001, cadreList: [] }
+            ]
+          },
+          {
+            id: 'st-karnataka', name: 'Karnataka',
+            serviceList: [
+              { id: 'cs-201', name: 'Karnataka Administrative Service (KAS)', cadreControllingAuthority: 'Government of Karnataka', commonBatchStartYear: 2000, commonBatchEndYear: 2001, cadreList: [] }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+};
 
 describe('EntitySelectionsComponent', () => {
   let component: EntitySelectionsComponent;
@@ -118,6 +161,64 @@ describe('EntitySelectionsComponent', () => {
 
       expect(component.selectedDataTemp).toContain('one-more');
       expect(component.organisationLimitError).toBe('');
+    });
+  });
+
+  describe('SPV portal', () => {
+    beforeEach(() => {
+      component.application = NsAccessControlConfig.Application.SPV;
+    });
+
+    it('should cap Organisation at the limit, saying so, and still let one be removed', () => {
+      component.selectedDataTemp = organisationIds(SPV_MAX_SELECTIONS);
+
+      component.toggleSelection({ identifier: 'one-too-many' });
+      expect(component.selectedDataTemp.length).toBe(SPV_MAX_SELECTIONS);
+      expect(component.organisationLimitError).toBe(`Maximum ${SPV_MAX_SELECTIONS} values`);
+
+      component.toggleSelection({ identifier: 'org-0' });
+      expect(component.selectedDataTemp.length).toBe(SPV_MAX_SELECTIONS - 1);
+      expect(component.organisationLimitError).toBe('');
+    });
+
+    it('should cap Designation as well, but no other field', () => {
+      component.selectionType = NsAccessControlConfig.SelectionType.Designation;
+      component.selectedDataTemp = organisationIds(SPV_MAX_SELECTIONS);
+      component.toggleSelection({ designation: 'One Too Many' });
+      expect(component.selectedDataTemp.length).toBe(SPV_MAX_SELECTIONS);
+
+      component.selectionType = NsAccessControlConfig.SelectionType.Group;
+      component.toggleSelection('Group A');
+      expect(component.selectedDataTemp.length).toBe(SPV_MAX_SELECTIONS + 1);
+    });
+
+    it('should not offer the MDO "Select all organisations"', () => {
+      expect(component.isMdoOrganisationSelection).toBe(false);
+      expect(component.canSelectAllOrganisations).toBe(false);
+    });
+
+    it('should tick up to the limit with Select All', () => {
+      jest.spyOn(component, 'getFilteredEntityGrouped').mockImplementation(() => undefined);
+      component.selectedDataTemp = organisationIds(SPV_MAX_SELECTIONS - 1);
+      component.dataList = [{ identifier: 'new-1' }, { identifier: 'new-2' }];
+
+      component.selectAvailableOptions({ checked: true, source: { value: 'selectAll' } } as any);
+
+      expect(component.selectedDataTemp.length).toBe(SPV_MAX_SELECTIONS);
+      expect(component.organisationLimitError).toBe(`Maximum ${SPV_MAX_SELECTIONS} values`);
+    });
+
+    it('should title the popup of a locked group as view only', () => {
+      component = createComponent({ condition: { entity: NsAccessControlConfig.SelectionType.Organizations }, selected: [], disabled: true });
+      component.application = NsAccessControlConfig.Application.SPV;
+      component.selectionType = NsAccessControlConfig.SelectionType.Organizations;
+      expect(component.getModalTitle()).toBe('Organisation (view only)');
+
+      component.selectionType = NsAccessControlConfig.SelectionType.Service;
+      expect(component.getModalTitle()).toBe('Services (view only)');
+
+      component.application = NsAccessControlConfig.Application.MDO;
+      expect(component.getModalTitle()).toBe('Select Services');
     });
   });
 
@@ -297,6 +398,107 @@ describe('EntitySelectionsComponent', () => {
       component.ngOnInit();
 
       expect(component.orgSelectionIds).toEqual(['l0-org', 'l1-org']);
+    });
+  });
+
+  describe('service list', () => {
+    let cadreMappingService: CadreMappingService;
+
+    const openServiceList = (org: any, application = NsAccessControlConfig.Application.MDO, authorityNames: string[] = [], stateName = '') => {
+      config.application = application;
+      config.userConfig.org = { rootOrgId: 'own-org', ...org };
+      config.accessControlCriteriaSelection.servicesRadioSelection = [];
+      cadreMappingService = new CadreMappingService();
+      cadreMappingService.initialize(CADRE_CONFIG_FIXTURE);
+      cadreMappingService.setCadreConfigData(CADRE_CONFIG_FIXTURE);
+      accessControlService.holdServiceCadrebatch = jest.fn(() => ({ service: cadreMappingService.getAllServices(), cadre: [], batch: [] }));
+      accessControlService.getCadreControllingAuthorityNames = jest.fn(() => authorityNames);
+      accessControlService.getOrgStateName = jest.fn(() => stateName);
+
+      TestBed.resetTestingModule();
+      TestBed.configureTestingModule({
+        providers: [{ provide: MAT_DIALOG_DATA, useValue: { condition: { entity: NsAccessControlConfig.SelectionType.Service }, selected: [] } }]
+      });
+      component = TestBed.runInInjectionContext(
+        () => new EntitySelectionsComponent({ close: jest.fn() } as any, accessControlService, cadreMappingService, {})
+      );
+      component.ngOnInit();
+    };
+
+    const listedServices = () => component.dataList.map((service: any) => service.name).sort();
+
+    it('should show DoPT (CCA) the master list with the service type filter', () => {
+      openServiceList({ isCCA: true });
+
+      expect(component.isServiceListScopedToOrganisation).toBe(false);
+      expect(component.serviceSelectionTypes).toEqual(['All Services', 'All India Services', 'Central Civil Service', 'State Service']);
+      expect(component.dataList.length).toBe(cadreMappingService.getAllServices().length);
+      expect(component.noServicesMapped).toBe(false);
+    });
+
+    it('should show a ministry that is a Cadre Controlling Authority only the services it controls, without the filter', () => {
+      openServiceList({ isCCA: false }, NsAccessControlConfig.Application.MDO, ['Ministry of Home Affairs']);
+
+      expect(component.isServiceListScopedToOrganisation).toBe(true);
+      expect(listedServices()).toEqual(['DANICS', 'Indian Police Service (IPS)']);
+      expect(accessControlService.getCadreControllingAuthorityNames).toHaveBeenCalledWith(config);
+    });
+
+    it('should show a state organisation only the services of its own state', () => {
+      openServiceList({ isCCA: false, sbOrgType: 'state' }, NsAccessControlConfig.Application.MDO, [], 'BIHAR');
+
+      expect(component.isServiceListScopedToOrganisation).toBe(true);
+      expect(listedServices()).toEqual(['Bihar Administrative Service (BAS)']);
+    });
+
+    it('should show the no services message when the organisation has none to select from', () => {
+      openServiceList({ isCCA: false, orgName: 'Mahesh MDO' });
+
+      expect(component.dataList).toEqual([]);
+      expect(component.noServicesMapped).toBe(true);
+      expect(component.noServicesMappedMessage).toContain('No services are currently mapped to your State/Ministry');
+    });
+
+    it('should not show the no services message when only a search finds nothing', () => {
+      openServiceList({ isCCA: false }, NsAccessControlConfig.Application.MDO, ['Ministry of Home Affairs']);
+
+      component.getServicesList('no such service');
+
+      expect(component.dataList).toEqual([]);
+      expect(component.noServicesMapped).toBe(false);
+    });
+
+    it('should search within the scoped services only', () => {
+      openServiceList({ isCCA: false }, NsAccessControlConfig.Application.MDO, ['Ministry of Home Affairs']);
+
+      component.getServicesList('police');
+
+      expect(listedServices()).toEqual(['Indian Police Service (IPS)']);
+    });
+
+    it('should keep the services narrowed by a selected cadre or batch', () => {
+      openServiceList({ isCCA: false }, NsAccessControlConfig.Application.MDO, ['Ministry of Home Affairs']);
+      accessControlService.holdServiceCadrebatch.mockReturnValue({ service: [{ id: 'x', name: 'DANICS' }], cadre: [], batch: [] });
+
+      component.getServicesList('');
+
+      expect(listedServices()).toEqual(['DANICS']);
+    });
+
+    it('should leave the creation portal list unscoped', () => {
+      openServiceList({ isCCA: false }, NsAccessControlConfig.Application.Creation_Portal);
+
+      expect(component.isServiceListScopedToOrganisation).toBe(false);
+      expect(component.noServicesMapped).toBe(false);
+      expect(component.dataList.length).toBeGreaterThan(0);
+    });
+
+    it('should scope the list in the MDO reusable user groups as in the training plan', () => {
+      config.context = { type: 'reusable-user-groups' };
+      openServiceList({ isCCA: false }, NsAccessControlConfig.Application.MDO, ['Ministry of Home Affairs']);
+
+      expect(component.isServiceListScopedToOrganisation).toBe(true);
+      expect(listedServices()).toEqual(['DANICS', 'Indian Police Service (IPS)']);
     });
   });
 });
