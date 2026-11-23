@@ -49,7 +49,7 @@
                 <div class="flex gap-3 flex-middle mt-4">
                     <div class="card-description flex flex-middle gap-1">
                         <mat-icon svgIcon="frac"></mat-icon> 
-                    <span>{{(data.children.children) ? data.children.children?.length : 0}} Child Org</span>
+                    <span>{{getChildOrgCount(data)}} Child Org</span>
                     </div>
                     <div class="card-description flex flex-middle gap-1">
                         <mat-icon svgIcon="frac"></mat-icon> 
@@ -133,6 +133,14 @@
             <mat-icon>close</mat-icon>
             <span>Remove Connection</span>
         </button>
+        <ng-container *ngIf="data.columnInfo.config.enableMoveConnection">
+            <button (click)="menuAction('move-term', data)"
+                mat-menu-item name="channel-analytics-button" class="action-btn" i18n-aria-label
+                aria-label="Analytics">
+                <mat-icon>arrow_forward</mat-icon>
+                <span>Move Connection</span>
+            </button>
+        </ng-container>
         <button *ngIf="data.columnInfo.config.enableManageOrganization" (click)="menuAction('manage-org', data)"
             mat-menu-item name="channel-analytics-button" class="action-btn" i18n-aria-label
             aria-label="Analytics">

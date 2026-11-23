@@ -75,7 +75,7 @@ describe('FrameworkService', () => {
   });
 
   it('getUserCount should return the count for the term org or 0', () => {
-    service.userCountData = [{ id: 'org1', count: 5 }];
+    (service as any).userCounts.set('org1', 5);
     expect(service.getUserCount({ additionalProperties: { orgId: 'org1' } })).toBe(5);
     expect(service.getUserCount({ additionalProperties: { orgId: 'org2' } })).toBe(0);
     expect(service.getUserCount({})).toBe(0);

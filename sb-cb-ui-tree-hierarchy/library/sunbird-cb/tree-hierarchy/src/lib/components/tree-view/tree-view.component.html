@@ -29,7 +29,7 @@
                             </ng-container>
                             </span>
                             <ng-template #firstColumn>
-                                <span *ngIf="i == 0" id="box{{i+1}}count" class="count">({{column.children.length}})</span>
+                                <span *ngIf="i == 0" id="box{{i+1}}count" class="count">({{getFirstColumnCount(column)}})</span>
                             </ng-template>
                             <ng-container class="" *ngIf="column?.config?.createBtnEnabled && !column?.config?.addOrgEnabled && !checkChildOrg()">
                                 <button mat-button class="add-btn margin-left-auto" [ngClass]="{'button-enabled': configCodeBtn== column?.code, 'button-disabled': configCodeBtn!== column?.code}"
@@ -58,7 +58,7 @@
                 </div>
             </div>
             <div class="padding-x2 cat-columns container-box" id="box{{i+1}}">
-                <ng-container *ngIf="column?.children && column?.children.length > 0">
+                <ng-container *ngIf="hasColumnContent(column)">
                     <lib-tree-column-view *ngIf="loaded[column.code]" #selectedTaxonomyTerm [column]="column"
                     [containerId]="'box'+(i+1)" [childOrg]="childOrgData" [isChildOrg]="checkChildOrg()" (updateTaxonomyTerm)="updateTaxonomyTerm($event)"
                     (updateTermList)="updateDraftStatusTerms($event)" (cardsCount)="getNoOfCards($event)" 

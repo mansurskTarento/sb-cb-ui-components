@@ -1,10 +1,10 @@
 import { NO_ERRORS_SCHEMA } from '@angular/core';
-import { ComponentFixture, TestBed, waitForAsync } from '@angular/core/testing';
+import { ComponentFixture, TestBed, fakeAsync, tick, waitForAsync } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { provideHttpClientTesting } from '@angular/common/http/testing';
 import { MatDialogModule } from '@angular/material/dialog';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
-import { of } from 'rxjs';
+import { of, throwError } from 'rxjs';
 
 import { ApprovalService } from '../../services/approval.service';
 import { ConnectorService } from '../../services/connector.service';
@@ -208,6 +208,194 @@ describe('TreeViewComponent', () => {
       component.childOrgData = { rootOrgId: 'org1' };
       component.userRolesData = new Set<string>(['mdo_admin']);
       expect(component.checkChildOrg()).toBe(true);
+    });
+  });
+
+  describe('org hierarchy (v2) mode', () => {
+    const orgData = { identifier: 'root', id: 'root', orgHierarchyFrameworkId: 'fw_root' };
+    let loadOrgHierarchySpy: jasmine.Spy;
+
+    beforeEach(() => {
+      loadOrgHierarchySpy = spyOn(frameworkService, 'loadOrgHierarchy').and.returnValue(of({} as any));
+      component.orgSelectedData = orgData;
+      component.childOrgData = { id: 'root' };
+    });
+
+    afterEach(() => {
+      frameworkService.isOrgHierarchyMode = false;
+    });
+
+    it('should load the hierarchy through the v2 API instead of the framework read', () => {
+      fixture.detectChanges();
+      expect(loadOrgHierarchySpy).toHaveBeenCalledWith(orgData, { id: 'root' });
+      expect(getFrameworkInfoSpy).not.toHaveBeenCalled();
+    });
+
+    it('should keep using the framework read when the org has no hierarchy framework', () => {
+      component.orgSelectedData = { identifier: 'root' };
+      fixture.detectChanges();
+      expect(getFrameworkInfoSpy).toHaveBeenCalled();
+      expect(loadOrgHierarchySpy).not.toHaveBeenCalled();
+    });
+
+    it('should not stack loader subscriptions when init runs again', () => {
+      fixture.detectChanges();
+      const first = component.loaderSubscription;
+      component.init();
+      expect(first.closed).toBeTrue();
+      expect(component.loaderSubscription.closed).toBeFalse();
+    });
+
+    it('should ask the service to load the children of a selected card', () => {
+      spyOn(frameworkService, 'selectHierarchyParent');
+      frameworkService.categoriesHash.next([{ code: 'level2' }, { code: 'level3' }] as any);
+      const term = { identifier: 'a', code: 'a', category: 'level2', childCount: 3 };
+      component.updateFinalList({ selectedTerm: term, isSelected: true });
+      expect(frameworkService.selectHierarchyParent).toHaveBeenCalledWith('level2', term);
+      expect(frameworkService.selectionList.get('level2')).toBe(term);
+    });
+
+    it('should show header counts from the API child counts', () => {
+      frameworkService.isOrgHierarchyMode = true;
+      frameworkService.categoriesHash.next([{ code: 'level2' }, { code: 'level3' }] as any);
+      frameworkService.list.set('level2', { code: 'level2', index: 1, children: [{ identifier: 'a' }] } as any);
+      frameworkService.list.set('level3', { code: 'level3', index: 2, children: [] } as any);
+      spyOn(frameworkService, 'getHierarchyColumnState').and.returnValue({ total: 57 } as any);
+      expect(component.getFirstColumnCount(frameworkService.list.get('level2'))).toBe(57);
+      expect(component.getCount('level2')).toBe(57);
+      expect(component.getCount('level3')).toBe(0);
+      frameworkService.selectionList.set('level2', { identifier: 'a', childCount: 12 });
+      expect(component.getCount('level3')).toBe(12);
+    });
+
+    it('should keep the column view for levels that hold orgs, as before', () => {
+      frameworkService.isOrgHierarchyMode = true;
+      expect(component.hasColumnContent({ code: 'level3', children: [], hasData: true })).toBeTrue();
+      expect(component.hasColumnContent({ code: 'level9', children: [], hasData: false })).toBeFalse();
+      expect(component.hasColumnContent({ code: 'level9', children: [{}], hasData: false })).toBeTrue();
+    });
+
+    it('should load the framework terms on demand before removing a connection', () => {
+      frameworkService.isOrgHierarchyMode = true;
+      const ensureSpy = spyOn(frameworkService, 'ensureOrgEditContext').and.returnValue(of(undefined));
+      spyOn(frameworkService, 'toFrameworkTerm').and.returnValue({ code: 'T_A' });
+      const assocSpy = spyOn(component, 'getSelectedTermsAssociation').and.returnValue([]);
+      spyOn(TestBed.inject(MatSnackBar), 'open');
+      component.removeConnection({ children: { identifier: 'a', additionalProperties: { orgId: 'a' } } });
+      expect(ensureSpy).toHaveBeenCalledWith(orgData);
+      expect(assocSpy).toHaveBeenCalledWith('T_A');
+    });
+
+    it('should show an error and not open the dialog when the framework terms cannot be loaded', () => {
+      frameworkService.isOrgHierarchyMode = true;
+      spyOn(frameworkService, 'ensureOrgEditContext').and.returnValue(throwError(new Error('x')));
+      const snackBar = TestBed.inject(MatSnackBar);
+      spyOn(snackBar, 'open');
+      spyOn(console, 'error');
+      const dialogSpy = spyOn(component.dialog, 'open');
+      component.openOrganizationDialog({ code: 'level2' }, 0, 'add');
+      expect(dialogSpy).not.toHaveBeenCalled();
+      expect(snackBar.open).toHaveBeenCalledWith('Error in loading organisation hierarchy', 'cancel');
+    });
+
+    describe('link / unlink', () => {
+      const success = { params: { status: 'SUCCESS' }, result: { message: 'ok' } };
+      const failed = { params: { status: 'FAILED', errmsg: 'Organisation already linked' } };
+      let treeSvc: TreeHierarchyService;
+      let snackBar: MatSnackBar;
+      let initSpy: jasmine.Spy;
+
+      beforeEach(() => {
+        treeSvc = TestBed.inject(TreeHierarchyService);
+        snackBar = TestBed.inject(MatSnackBar);
+        spyOn(snackBar, 'open');
+        frameworkService.isOrgHierarchyMode = true;
+        frameworkService.categoriesHash.next([{ code: 'level2' }, { code: 'level3' }] as any);
+        initSpy = spyOn(component, 'init');
+      });
+
+      it('should link the selected orgs under the card selected in the previous column', fakeAsync(() => {
+        const linkSpy = spyOn(treeSvc, 'linkOrgHierarchy').and.returnValue(of(success as any));
+        frameworkService.selectionList.set('level2', { identifier: 'a', additionalProperties: { orgId: 'a' } });
+        component.linkOrganisations([{ identifier: 'o1' }, { identifier: 'o2' }, { identifier: 'o1' }], { code: 'level3' });
+        expect(linkSpy).toHaveBeenCalledWith('a', ['o1', 'o2']);
+        expect(initSpy).not.toHaveBeenCalled();
+        tick(5000);
+        expect(snackBar.open).toHaveBeenCalledWith('Organization hierarchy updated successfully');
+        expect(initSpy).toHaveBeenCalled();
+      }));
+
+      it('should link first-column orgs under the selected root org', () => {
+        const linkSpy = spyOn(treeSvc, 'linkOrgHierarchy').and.returnValue(of(success as any));
+        component.linkOrganisations([{ identifier: 'o1' }], { code: 'level2' });
+        expect(linkSpy).toHaveBeenCalledWith('root', ['o1']);
+      });
+
+      it('should publish after linking when the parent was also changed (update hierarchy)', () => {
+        spyOn(treeSvc, 'linkOrgHierarchy').and.returnValue(of(success as any));
+        const publishSpy = spyOn(component, 'publishFramework');
+        frameworkService.selectionList.set('level2', { identifier: 'a', additionalProperties: { orgId: 'a' } });
+        component.linkOrganisations([{ identifier: 'o1' }], { code: 'level3' }, true);
+        expect(publishSpy).toHaveBeenCalledWith({ id: 'fw_root', category: '' });
+      });
+
+      it('should show the server error and stop the loader when linking fails', () => {
+        spyOn(treeSvc, 'linkOrgHierarchy').and.returnValue(of(failed as any));
+        const loaderSpy = spyOn(treeSvc, 'setLoaderState');
+        component.linkOrganisations([{ identifier: 'o1' }], { code: 'level2' });
+        expect(loaderSpy).toHaveBeenCalledWith(false);
+        expect(snackBar.open).toHaveBeenCalledWith('Organisation already linked', 'cancel');
+        expect(initSpy).not.toHaveBeenCalled();
+      });
+
+      it('should not call link without a parent org', () => {
+        const linkSpy = spyOn(treeSvc, 'linkOrgHierarchy');
+        component.linkOrganisations([{ identifier: 'o1' }], { code: 'level3' }); // nothing selected in level2
+        expect(linkSpy).not.toHaveBeenCalled();
+        expect(snackBar.open).toHaveBeenCalledWith('Error in creating term', 'cancel');
+      });
+
+      it('should only unlink the card org (no org/ext/v2/update) and reload the tree', fakeAsync(() => {
+        const unlinkSpy = spyOn(treeSvc, 'unlinkOrgHierarchy').and.returnValue(of(success as any));
+        const contentSpy = spyOn(treeSvc, 'orgContentUpdate');
+        component.unlinkOrganisation({ identifier: 'a', additionalProperties: { orgId: 'a' } });
+        tick();
+        expect(unlinkSpy).toHaveBeenCalledWith('a', false);
+        expect(contentSpy).not.toHaveBeenCalled();
+        tick(5000);
+        expect(snackBar.open).toHaveBeenCalledWith('Organization hierarchy updated successfully');
+        expect(initSpy).toHaveBeenCalled();
+      }));
+
+      it('should unlink after the remove confirmation is accepted', () => {
+        spyOn(frameworkService, 'ensureOrgEditContext').and.returnValue(of(undefined));
+        spyOn(frameworkService, 'toFrameworkTerm').and.returnValue({ code: 'T_A' });
+        spyOn(component, 'getSelectedTermsAssociation').and.returnValue([{ ids: ['T_A'] }, { ids: ['T_A1'] }]);
+        spyOn(component.dialog, 'open').and.returnValue({ afterClosed: () => of(true) } as any);
+        const unlinkSpy = spyOn(component, 'unlinkOrganisation');
+        const card = { identifier: 'a', additionalProperties: { orgId: 'a' } };
+        component.removeConnection({ children: card });
+        expect(unlinkSpy).toHaveBeenCalledWith(card);
+      });
+
+      it('should keep the tree and show an error when unlink fails', fakeAsync(() => {
+        spyOn(treeSvc, 'unlinkOrgHierarchy').and.returnValue(throwError({ error: { params: { status: 'FAILED', errmsg: null } } }));
+        const contentSpy = spyOn(treeSvc, 'orgContentUpdate');
+        spyOn(console, 'error');
+        component.unlinkOrganisation({ identifier: 'a', additionalProperties: { orgId: 'a' } });
+        tick(5000);
+        expect(contentSpy).not.toHaveBeenCalled();
+        expect(snackBar.open).toHaveBeenCalledWith('Failed to remove connection.', 'cancel');
+        expect(initSpy).not.toHaveBeenCalled();
+      }));
+    });
+
+    it('should cancel pending hierarchy requests on destroy', () => {
+      fixture.detectChanges();
+      frameworkService.isOrgHierarchyMode = true;
+      const resetSpy = spyOn(frameworkService, 'resetHierarchyState');
+      fixture.destroy();
+      expect(resetSpy).toHaveBeenCalled();
     });
   });
 });

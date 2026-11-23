@@ -32,6 +32,30 @@ describe('TreeHierarchyService', () => {
     call.flush({});
   });
 
+  it('linkOrgHierarchy should POST the parent and child org ids to /org/v2/hierarchy/link', () => {
+    service.linkOrgHierarchy('p1', ['c1', 'c2']).subscribe();
+    const call = httpMock.expectOne('/apis/proxies/v8/org/v2/hierarchy/link');
+    expect(call.request.method).toBe('POST');
+    expect(call.request.body).toEqual({
+      request: { parentOrgId: 'p1', associations: [{ childOrgId: 'c1' }, { childOrgId: 'c2' }] }
+    });
+    call.flush({});
+  });
+
+  it('unlinkOrgHierarchy should POST the org id with requireLeaf false to /org/v2/hierarchy/unlink', () => {
+    service.unlinkOrgHierarchy('o1').subscribe();
+    const call = httpMock.expectOne('/apis/proxies/v8/org/v2/hierarchy/unlink');
+    expect(call.request.method).toBe('POST');
+    expect(call.request.body).toEqual({ request: { orgId: 'o1', requireLeaf: false } });
+    call.flush({});
+  });
+
+  it('isActionSuccess should only accept params.status SUCCESS', () => {
+    expect(service.isActionSuccess({ params: { status: 'SUCCESS' } } as any)).toBeTrue();
+    expect(service.isActionSuccess({ params: { status: 'FAILED', errmsg: 'x' } } as any)).toBeFalse();
+    expect(service.isActionSuccess(null)).toBeFalse();
+  });
+
   it('createTerm should POST with framework and category params', () => {
     service.createTerm({}, frameworkObj).subscribe();
     const call = httpMock.expectOne('/apis/proxies/v8/action/framework/v3/term/create?framework=fw1&category=cat1');

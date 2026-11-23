@@ -1,12 +1,16 @@
-import { Component, EventEmitter, Input, OnChanges, OnDestroy, OnInit, Output } from '@angular/core';
+import { AfterViewInit, Component, EventEmitter, Input, NgZone, OnChanges, OnDestroy, OnInit, Output } from '@angular/core';
 import { FrameworkService } from '../../services/framework.service';
-import { Subscription } from 'rxjs';
+import { Subscription, fromEvent } from 'rxjs';
 import { ConnectorService } from '../../services/connector.service';
 import { ApprovalService } from '../../services/approval.service';
 import { CardChecked, CardSelection, CardsCount, Card } from '../../models/variable-type.model';
+import { NSOrgHierarchy } from '../../models/org-hierarchy.model';
 import * as _ from 'lodash'
 import { UntypedFormControl, Validators } from '@angular/forms';
-import { debounceTime, distinctUntilChanged } from 'rxjs/operators';
+import { auditTime, debounceTime, distinctUntilChanged, filter } from 'rxjs/operators';
+
+/** Distance from the bottom of a column (px) at which the next page is requested */
+const SCROLL_LOAD_THRESHOLD_PX = 80;
 
 declare var LeaderLine: any;
 @Component({
@@ -15,7 +19,7 @@ declare var LeaderLine: any;
     styleUrls: ['./tree-column-view.component.scss'],
     standalone: false
 })
-export class TreeColumnViewComponent implements OnInit, OnDestroy, OnChanges {
+export class TreeColumnViewComponent implements OnInit, OnDestroy, OnChanges, AfterViewInit {
   @Input() column: any;
   @Input() containerId: string | undefined
   @Input() isChildOrg = false
@@ -36,26 +40,52 @@ export class TreeColumnViewComponent implements OnInit, OnDestroy, OnChanges {
   currentLastIndex = 50
   columnItems: any = []
   filteredColumnItems: any = []
+  private searchSubscription: Subscription | undefined;
+  private approvalSubscription: Subscription | undefined;
+  private hierarchySubscription: Subscription | undefined;
+  private scrollSubscription: Subscription | undefined;
   constructor(
     private frameworkService: FrameworkService,
     private connectorService: ConnectorService,
-    private approvalService : ApprovalService
+    private approvalService : ApprovalService,
+    private ngZone: NgZone
   ) {
   }
   ngOnChanges(): void {}
 
+  /** Org hierarchy columns are fed page by page from the v2 hierarchy API */
+  get isOrgHierarchy(): boolean {
+    return this.frameworkService.isOrgHierarchyMode
+  }
+
+  /** Records, search and paging of this column come from the server */
+  get isServerPaged(): boolean {
+    return !!this.column && this.frameworkService.isServerPagedColumn(this.column.code)
+  }
+
+  private get hierarchyState(): NSOrgHierarchy.IColumnState | null {
+    return this.column ? this.frameworkService.getHierarchyColumnState(this.column.code) : null
+  }
 
   ngOnInit(): void {
     this.subscribeEvents()
+    if (this.isOrgHierarchy) {
+      const state = this.hierarchyState
+      if (state && state.query) {
+        this.searchValue.setValue(state.query, { emitEvent: false })
+      }
+      this.hierarchySubscription = this.frameworkService.hierarchyColumnEvents$(this.column.code)
+        .subscribe(event => this.onHierarchyColumnEvent(event))
+    }
     this.setColumnItems()
-    this.searchValue.valueChanges.pipe(
+    this.searchSubscription = this.searchValue.valueChanges.pipe(
       debounceTime(700),
       distinctUntilChanged(),
     ).subscribe((ele: any) => {
       this.searchFilterData(ele)
     })
-    if (this.column.index === 1) {
-      this.approvalService.getUpdateList().subscribe((list:any) => {
+    if (this.column.index === 1 && !this.isOrgHierarchy) {
+      this.approvalSubscription = this.approvalService.getUpdateList().subscribe((list:any) => {
         this.approvalTerm = list.filter((item: any) => this.column.code === item.category)
         if(this.approvalTerm){
           this.approvalTerm.forEach((term: any, _i: number)=> {
@@ -85,7 +115,79 @@ export class TreeColumnViewComponent implements OnInit, OnDestroy, OnChanges {
     // this.frameworkService.isDataUpdated.subscribe(() => {
     //   this.ngOnInit()
     // })
-    
+
+  }
+
+  ngAfterViewInit(): void {
+    this.listenForScrollEnd()
+  }
+
+  /** Requests the next page when the column container is scrolled to its last record */
+  private listenForScrollEnd() {
+    if (!this.isOrgHierarchy || !this.containerId) {
+      return
+    }
+    const container = document.getElementById(this.containerId)
+    if (!container) {
+      return
+    }
+    this.ngZone.runOutsideAngular(() => {
+      this.scrollSubscription = fromEvent(container, 'scroll', { passive: true }).pipe(
+        auditTime(200),
+        filter(() => container.scrollTop + container.clientHeight >= container.scrollHeight - SCROLL_LOAD_THRESHOLD_PX),
+        filter(() => {
+          const state = this.hierarchyState
+          return this.isServerPaged && !!state && state.hasMore && !state.isLoading
+        })
+      ).subscribe(() => this.ngZone.run(() => this.loadMore()))
+    })
+  }
+
+  /** Applies a hierarchy state change of this column (page loaded/appended, search results, counts, reset) */
+  private onHierarchyColumnEvent(event: NSOrgHierarchy.IColumnEvent | null) {
+    if (!event) {
+      return
+    }
+    this.columnData = event.state ? event.state.records : []
+    this.setColumnItems()
+    switch (event.reason) {
+      case 'load':
+      case 'append':
+        this.emitCardsCount()
+        this.redrawParentConnectors()
+        break
+      case 'search':
+        this.emitCardsCount()
+        this.refreshSelectionAfterSearch()
+        break
+      default:
+        break
+    }
+  }
+
+  private emitCardsCount() {
+    if (this.columnData.length > 0) {
+      this.cardsCount.emit({ category: this.columnData[0].category || '', count: this.columnData.length })
+    } else {
+      this.cardsCount.emit({ category: this.column.code, count: 0 })
+    }
+  }
+
+  /** Connects the selected parent card to the loaded cards (only while no card of this column is selected) */
+  private redrawParentConnectors() {
+    if (this.column.index <= 1 || this.frameworkService.selectionList.has(this.column.code)) {
+      return
+    }
+    const back = this.frameworkService.getPreviousCategory(this.column.code)
+    const parent = back ? this.frameworkService.selectionList.get(back.code) : null
+    if (!back || !parent || !parent.cardRef) {
+      return
+    }
+    setTimeout(() => {
+      if (this.frameworkService.selectionList.get(back.code) === parent && !this.frameworkService.selectionList.has(this.column.code)) {
+        this.setConnectors(parent.cardRef, this.columnItems, 'ALL')
+      }
+    }, 100)
   }
  
   isExists(e:any){
@@ -170,6 +272,15 @@ export class TreeColumnViewComponent implements OnInit, OnDestroy, OnChanges {
     })
   }
   insertUpdateHandler(e: any, _next: any, isUpdate?: any) {
+    if (this.isOrgHierarchy) {
+      // Parent selected: the service is (re)loading its children; show what is loaded and clear selection
+      const state = this.hierarchyState
+      this.columnData = state ? state.records : []
+      this.columnData.forEach((item: any) => { item.selected = false })
+      this.setColumnItems()
+      this.emitCardsCount()
+      return
+    }
     const back = this.frameworkService.getPreviousCategory(this.column.code)
     
     const localTerms:any = []
@@ -208,22 +319,7 @@ export class TreeColumnViewComponent implements OnInit, OnDestroy, OnChanges {
 
     }
   }
-  updateSelection1(_data: any) { 
-  }
-  updateSelection(_selection: any) {
-    // if(this.column.code==='medium'){
-    // }
-    // if (selection.element.category === this.column.code) {
-    //   this.updateTaxonomyTerm.emit({ isSelected: selection.isSelected, selectedTerm: selection.element })
-    // }
-    // this.column.children = this.column.children.map(col => {
-    //   if (col.code === selection.element.code) {
-    //     col.selected = true
-    //   } else {
-    //     col.selected = false
-    //   }
-    //   return col
-    // })
+  updateSelection1(_data: any) {
   }
 
   setColumnItems() {
@@ -235,6 +331,12 @@ export class TreeColumnViewComponent implements OnInit, OnDestroy, OnChanges {
     //   })
     //   return data
     // } else {
+    if (this.isServerPaged) {
+      // already filtered and paged by the server
+      this.filteredColumnItems = this.columnData || []
+      this.columnItems = [...this.filteredColumnItems]
+      return
+    }
     let localSearchValue = this.searchValue.value && this.searchValue.value.toLowerCase() || ''
     let filteredColumnData = []
     this.columnItems = []
@@ -278,12 +380,23 @@ export class TreeColumnViewComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   searchFilterData(_ele: any){
-
+    if (this.isServerPaged) {
+      // server-side search (offset 0, results replace the column); selection is refreshed when results arrive
+      if (!this.frameworkService.searchHierarchyColumn(this.column.code, _ele || '')) {
+        this.setColumnItems()
+      }
+      return
+    }
     this.setColumnItems()
+    this.refreshSelectionAfterSearch()
+  }
+
+  /** Re-selects the parent card so connectors and downstream columns match the new column content */
+  private refreshSelectionAfterSearch() {
     const back = this.frameworkService.getPreviousCategory(this.column.code)
     if(back && back.code) {
       let backColumData = this.frameworkService.selectionList.get(back.code)
-      if(backColumData.category) {
+      if(backColumData && backColumData.category) {
         this.frameworkService.removeOldLine()
       
         setTimeout(() => {
@@ -306,6 +419,10 @@ export class TreeColumnViewComponent implements OnInit, OnDestroy, OnChanges {
   }
 
   loadMore() {
+    if (this.isServerPaged) {
+      this.frameworkService.loadNextHierarchyPage(this.column.code)
+      return
+    }
     this.currentLastIndex = this.currentLastIndex + this.limitToAdd
     this.searchFilterData(this.searchValue.value)
   }
@@ -387,15 +504,19 @@ export class TreeColumnViewComponent implements OnInit, OnDestroy, OnChanges {
     this.updateTermList.emit(event);
   }
 
-  get showLoadMoreBtn(): boolean {
-    if(this.column && this.column.config && this.column.config.categoryDisplayName !== 'Organisation' 
-      && this.column.name !== 'Organisation' && this.columnItems && this.columnItems.length > 0) {
-        return true
-      }
-    return false
+  get showLoadMoreButton(): boolean {
+    if (this.isServerPaged) {
+      const state = this.hierarchyState
+      return !!(state && state.hasMore)
+    }
+    return !this.disableLoadButton
   }
 
   get disableLoadButton(): boolean {
+    if (this.isServerPaged) {
+      const state = this.hierarchyState
+      return !state || !state.hasMore || state.isLoading
+    }
     if(this.filteredColumnItems && this.filteredColumnItems.length < this.currentLastIndex) {
       return true
     }
@@ -409,6 +530,8 @@ export class TreeColumnViewComponent implements OnInit, OnDestroy, OnChanges {
     if(this.newTermSubscription) {
       this.newTermSubscription.unsubscribe()
     }
+    [this.searchSubscription, this.approvalSubscription, this.hierarchySubscription, this.scrollSubscription]
+      .forEach(sub => sub && sub.unsubscribe())
   }
 
   cardActionEmit(event: any) {

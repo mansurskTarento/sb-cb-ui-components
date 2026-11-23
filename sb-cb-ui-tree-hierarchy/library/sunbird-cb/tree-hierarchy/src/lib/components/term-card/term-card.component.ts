@@ -384,7 +384,22 @@ export class TermCardComponent implements OnInit, OnDestroy {
     this.cardAction.emit({ action: type, data: _item })
   }
 
+  /** Org hierarchy records only carry a page of children, so the API's childCount is the total */
+  getChildOrgCount(item: any): number {
+    const term = item && item.children
+    if (!term) {
+      return 0
+    }
+    if (typeof term.childCount === 'number') {
+      return term.childCount
+    }
+    return term.children ? term.children.length : 0
+  }
+
   getuserCount(item: any) {
+    if (item.children && typeof item.children.userCount === 'number') {
+      return item.children.userCount
+    }
     if (item.children.code) {
       const tempData = item.columnInfo.children.find((i: any) => i.code === item.children.code)
       return tempData?.userCount || 0

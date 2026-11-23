@@ -1,0 +1,137 @@
+<div class="move-term-modal">
+  <div class="modal-header">
+    <h2 class="m-0">Move Organisation</h2>
+    <button mat-icon-button class="close-button" aria-label="Close" (click)="onClose()" [disabled]="isMoving">
+      <mat-icon>close</mat-icon>
+    </button>
+  </div>
+
+  <div class="modal-content">
+    <!-- Organisation being moved -->
+    <div class="section">
+      <div class="org-box">
+        <div class="org-name">{{ data?.organisation?.name }}</div>
+        <div class="org-meta">
+          {{ data?.organisation?.childCount || 0 }} Child Org · {{ data?.organisation?.userCount || 0 }} Users
+          <ng-container *ngIf="data?.organisation?.level"> · Level {{ data?.organisation?.level }}</ng-container>
+        </div>
+      </div>
+    </div>
+
+    <!-- Current parent -->
+    <div class="section">
+      <label class="section-label">Current Parent</label>
+      <ng-container *ngIf="data?.currentParent; else noParent">
+        <div class="flex flex-middle gap-2">
+          <span class="parent-name">{{ data?.currentParent?.name }}</span>
+          <ng-container *ngIf="data?.currentParent?.level">
+            <span class="level-chip">L{{ data?.currentParent?.level }}</span>
+          </ng-container>
+        </div>
+      </ng-container>
+      <ng-template #noParent><span class="parent-name">-</span></ng-template>
+    </div>
+
+    <!-- Step 1: parent level -->
+    <div class="section">
+      <div class="section-title">Choose a parent</div>
+      <p class="section-sub">Select a level, then pick the organisation to move under.</p>
+      <div class="level-list">
+        <ng-container *ngFor="let lvl of levels; trackBy: trackByLevel">
+          <button type="button" class="level-button"
+            [class.selected]="selectedLevel === lvl.level" [disabled]="isMoving || isLevelDisabled(lvl)"
+            (click)="selectLevel(lvl)">
+            Level {{ lvl.level }}
+            <ng-container *ngIf="isLevelDisabled(lvl)">
+              <mat-icon class="level-disabled-icon">block</mat-icon>
+            </ng-container>
+          </button>
+        </ng-container>
+      </div>
+      <div class="info-box">
+        <mat-icon class="info-icon">info_outline</mat-icon>
+        <ng-container *ngIf="selectedLevel !== null; else levelNotSelected">
+          <span>
+            Your organisation will become <b>Level {{ selectedLevel + 1 }}</b>.
+            Choose a parent at <b>Level {{ selectedLevel }}</b> below.
+          </span>
+        </ng-container>
+        <ng-template #levelNotSelected>
+          <span>Your organisation will be added one level below the selected parent.</span>
+        </ng-template>
+      </div>
+    </div>
+
+    <!-- Step 2: parent organisation of the selected level -->
+    <ng-container *ngIf="selectedLevel !== null">
+      <div class="section">
+        <div class="section-title">Level {{ selectedLevel }} organisations</div>
+        <mat-form-field appearance="outline" class="w-full move-select">
+          <mat-select #parentSelect [formControl]="parentOrgControl" placeholder="Select organisation"
+            panelClass="move-term-select-panel" disableOptionCentering
+            (openedChange)="onParentSelectOpenedChange($event, parentSelect)">
+            <mat-select-trigger>{{ selectedParent?.name }}</mat-select-trigger>
+            <div class="search-container flex flex-middle gap-2" (click)="$event.stopPropagation()">
+              <mat-icon class="search-icon">search</mat-icon>
+              <input type="text" class="search-input" placeholder="Search organisations" [formControl]="searchControl"
+                (keydown)="handleSearchKeydown($event)">
+            </div>
+            <ng-container *ngFor="let org of filteredOptions; trackBy: trackByOrg">
+              <mat-option [value]="org.id" [disabled]="isCurrentParent(org)">
+                <div class="option-name">{{ org.name }}</div>
+                <ng-container *ngIf="isCurrentParent(org)">
+                  <div class="option-meta">Current Parent</div>
+                </ng-container>
+              </mat-option>
+            </ng-container>
+            <ng-container *ngIf="isOrgsLoading">
+              <mat-option disabled>Loading...</mat-option>
+            </ng-container>
+            <ng-container *ngIf="!isOrgsLoading && filteredOptions.length === 0">
+              <mat-option disabled>No organisation found</mat-option>
+            </ng-container>
+          </mat-select>
+        </mat-form-field>
+        <!-- From / To summary of the move -->
+        <ng-container *ngIf="selectedParent">
+          <div class="move-summary">
+            <div class="summary-row">
+              <span class="summary-label">From</span>
+              <ng-container *ngIf="data?.currentParent; else noCurrentParent">
+                <span class="summary-value">
+                  <ng-container *ngIf="data?.currentParent?.level != null">
+                    Level {{ data?.currentParent?.level }}:
+                  </ng-container>
+                  <b>{{ data?.currentParent?.name }}</b>
+                </span>
+              </ng-container>
+              <ng-template #noCurrentParent><span class="summary-value">-</span></ng-template>
+            </div>
+            <div class="summary-row">
+              <span class="summary-label to">To</span>
+              <span class="summary-value">
+                Level {{ selectedLevel }}: <b>{{ selectedParent?.name }}</b>
+              </span>
+            </div>
+          </div>
+        </ng-container>
+        <ng-container *ngIf="data?.rootOrg?.name">
+          <p class="hint">
+            An organisation can only be moved within its own state or ministry, so only organisations of
+            {{ data?.rootOrg?.name }} are listed. It cannot be moved under itself or under its own sub-organisations.
+          </p>
+        </ng-container>
+      </div>
+    </ng-container>
+  </div>
+
+  <div class="modal-footer flex flex-end gap-3">
+    <button mat-button type="button" class="btn-common btn-secondary" (click)="onClose()" [disabled]="isMoving">
+      Cancel
+    </button>
+    <button mat-button type="button" class="btn-common btn-primary" (click)="onMove()" [disabled]="!canMove">
+      <ng-container *ngIf="!isMoving">Confirm Move</ng-container>
+      <ng-container *ngIf="isMoving">Moving...</ng-container>
+    </button>
+  </div>
+</div>

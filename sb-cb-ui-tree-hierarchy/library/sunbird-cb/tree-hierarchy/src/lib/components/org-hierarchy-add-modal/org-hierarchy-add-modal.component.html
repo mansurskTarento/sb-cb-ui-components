@@ -62,7 +62,8 @@
             <mat-form-field appearance="outline" class="w-full custom-height-select">
               <mat-select [formControl]="selectedOrgsControl" placeholder="Select" #singleSelect
                 [panelClass]="'mat-select-panel-below'" disableOptionCentering [disableOptionCentering]="true"
-                (keydown)="handleKeydown($event)" multiple>
+                (keydown)="handleKeydown($event)" (openedChange)="onOrgSelectOpenedChange($event, singleSelect)"
+                multiple>
                 <!-- Search container -->
                 <div class="search-container flex gap-5 flex-middle" (click)="$event.stopPropagation()">
                   <input type="text" [formControl]="searchControl" placeholder="Search..."
@@ -73,10 +74,14 @@
                     <mat-icon class="margin-remove">add</mat-icon>
                   </button>
                 </div>
-                <mat-option *ngFor="let organization of filteredOptions" [value]="organization.identifier">
+                <mat-option *ngFor="let organization of filteredOptions; trackBy: trackByOrg"
+                  [value]="organization.identifier">
                   {{organization.orgName}}
                 </mat-option>
-                <mat-option *ngIf="filteredOptions.length === 0" disabled>
+                <mat-option class="no-checkbox" *ngIf="isOrgsLoading" disabled>
+                  Loading...
+                </mat-option>
+                <mat-option class="no-checkbox" *ngIf="!isOrgsLoading && filteredOptions.length === 0" disabled>
                   No data found
                 </mat-option>
               </mat-select>

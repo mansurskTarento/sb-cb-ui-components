@@ -32,6 +32,7 @@ import { OrgHierarchyAddModalComponent } from './components/org-hierarchy-add-mo
 import { TreeHierarchyService } from './tree-hierarchy.service'
 import { CategoryEditModuleComponent } from './components/category-edit/category-edit-module/category-edit-module.component'
 import { MatChipsModule } from '@angular/material/chips'
+import { MoveTermComponent } from './components/move-term/move-term.component'
 
 @NgModule({
   declarations: [
@@ -56,6 +57,7 @@ import { MatChipsModule } from '@angular/material/chips'
     CreateTermFromFrameworkComponent,
     OrgHierarchyAddModalComponent,
     CategoryEditModuleComponent,
+    MoveTermComponent,
   ],
   imports: [
     CommonModule,

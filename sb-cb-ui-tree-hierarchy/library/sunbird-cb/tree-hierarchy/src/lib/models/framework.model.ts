@@ -98,6 +98,10 @@ export namespace NSFramework {
         config: any
         cardRef?: any
         userCount?: number
+        /** org hierarchy (v2) level number shown by this column */
+        level?: number
+        /** org hierarchy (v2): false when no org exists at this level yet (level > currentMaxLevel) */
+        hasData?: boolean
     }
     export interface ParentsElements {
         identifier: string;
