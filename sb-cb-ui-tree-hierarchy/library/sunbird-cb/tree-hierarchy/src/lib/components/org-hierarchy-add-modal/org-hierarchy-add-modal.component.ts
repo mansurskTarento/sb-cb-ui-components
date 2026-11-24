@@ -39,9 +39,7 @@ const ORG_SCROLL_THRESHOLD = 50
 })
 export class OrgHierarchyAddModalComponent implements OnInit, OnDestroy {
   searchControl = new FormControl('');
-  parentSearchControl = new FormControl('');
   selectedOrgsControl = new FormControl<(string | number)[]>([]);
-  parentSelectedOrgControl = new FormControl('');
 
   /** Organisations received from the unmapped-orgs API for the current search (all loaded pages) */
   orgOptions: IOrgOption[] = [];
@@ -64,11 +62,7 @@ export class OrgHierarchyAddModalComponent implements OnInit, OnDestroy {
   private orgRequest$ = new Subject<IOrgPageRequest>();
   private orgPanelClose$ = new Subject<void>();
 
-  parentFilteredOptions: any[] = [];
-
   private destroy$ = new Subject<void>();
-  /** Framework terms; source of the parent options in update mode */
-  frameworkData: any
 
   constructor(
     public dialogRef: MatDialogRef<OrgHierarchyAddModalComponent>,
@@ -78,11 +72,6 @@ export class OrgHierarchyAddModalComponent implements OnInit, OnDestroy {
   ) { }
 
   ngOnInit() {
-    if (this.data && this.data.type === 'update') {
-      this.frameworkData = _.cloneDeep(this.frameworkService.completeResponse)
-      this.getParentTerms(this.data.previous[this.data.previous.length - 2])
-    }
-
     this.orgRequest$
       .pipe(
         // a newer request (new search) drops the response of the previous one
@@ -116,12 +105,6 @@ export class OrgHierarchyAddModalComponent implements OnInit, OnDestroy {
     this.selectedOrgsControl.valueChanges
       .pipe(takeUntil(this.destroy$))
       .subscribe((ids: (string | number)[] | null) => this.syncSelectedOrgs(ids || []))
-
-    this.parentSearchControl.valueChanges
-      .pipe(takeUntil(this.destroy$))
-      .subscribe((value: any) => {
-        this.filterParentOptions(value)
-      })
   }
 
   ngOnDestroy() {
@@ -259,23 +242,6 @@ export class OrgHierarchyAddModalComponent implements OnInit, OnDestroy {
     this.searchControl.setValue('')
   }
 
-  filterParentOptions(searchValue: string) {
-    const originalOptions = this.frameworkData?.categories?.find((v: any) =>
-      v.code === this.data?.previous[this.data.previous.length - 2]?.category
-    )?.terms || []
-
-    if (!searchValue) {
-      // Reset to all original options when search is empty
-      this.parentFilteredOptions = [...originalOptions]
-      return
-    }
-
-    const filterValue = searchValue.toLowerCase()
-    this.parentFilteredOptions = originalOptions.filter((option: any) =>
-      option.name.toLowerCase().includes(filterValue)
-    )
-  }
-
   toggleSelectAll(event: Event) {
     event.stopPropagation()
     if (this.isAllSelected()) {
@@ -300,11 +266,6 @@ export class OrgHierarchyAddModalComponent implements OnInit, OnDestroy {
       .filter((org: IOrgOption | undefined): org is IOrgOption => !!org)
   }
 
-  getParentSelectedOptions() {
-    const selectedId = this.parentSelectedOrgControl.value
-    return this.parentFilteredOptions.find((option: any) => option.code === selectedId)
-  }
-
   removeSelected(id: string | number) {
     const currentSelection = this.selectedOrgsControl.value || []
     this.selectedOrgsControl.setValue(
@@ -317,26 +278,12 @@ export class OrgHierarchyAddModalComponent implements OnInit, OnDestroy {
   }
 
   onSave() {
-    if (this.data && this.data.type === 'update' && this.selectedOrgsControl?.value?.find((v: any) => v === this.parentSelectedOrgControl.value)) {
-      this.snackbar.open('You cannot select the parent organization as a child organization')
-      return
-    }
-    if (this.data && this.data.type === 'update' && this.selectedOrgsControl?.value?.length === 0 && !this.parentSelectedOrgControl.value) {
-      this.snackbar.open('Please select at least one organization or parent organization')
-      return
-    }
-    if (this.data && this.data.type === 'add' && this.selectedOrgsControl?.value?.length === 0) {
+    const selectedOrgs = this.getSelectedOptions()
+    if (!selectedOrgs.length) {
       this.snackbar.open('Please select at least one organization')
       return
     }
-    const selectedOrgs = this.getSelectedOptions()
-    const parentSelectedOrg = this.getParentSelectedOptions()
-    this.dialogRef.close({
-      selectedOrg: selectedOrgs,
-      paparentSelectedOrg: parentSelectedOrg,
-      currentTerm: this.data?.previous[this.data.previous.length - 1],
-      type: this.data.type,
-    })
+    this.dialogRef.close({ selectedOrg: selectedOrgs })
   }
 
   handleKeydown(event: KeyboardEvent) {
@@ -380,9 +327,5 @@ export class OrgHierarchyAddModalComponent implements OnInit, OnDestroy {
     const currentValues = this.selectedOrgsControl.value || []
     const updatedValues = currentValues.filter(item => item !== itemToRemove)
     this.selectedOrgsControl.setValue(updatedValues)
-  }
-
-  getParentTerms(item: any) {
-    this.parentFilteredOptions = this.frameworkData.categories.find((v: any) => v.code === item.category).terms
   }
 }

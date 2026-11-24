@@ -44,6 +44,8 @@ export class TreeViewComponent implements OnInit, OnDestroy {
   @Output() sentForApprove = new EventEmitter<any>()
   @Output() loaderEnable = new EventEmitter<any>()
   @Output() manageOrg = new EventEmitter<any>()
+  /** true when /org/v2/hierarchy/read returned a hierarchy, false when it failed / was empty (no framework) */
+  @Output() frameWorkCreated = new EventEmitter<boolean>()
   mapping = {};
   heightLighted = []
   localList = []
@@ -101,14 +103,24 @@ export class TreeViewComponent implements OnInit, OnDestroy {
 
   init() {
     this.initConfig()
+    this.subscribeToLoader()
+    // Without an org there is nothing to read; treat it as "no framework" instead of calling the API with an empty id
+    if (!this.orgSelectedData || !(this.orgSelectedData.identifier || this.orgSelectedData.id)) {
+      this.onHierarchyUnavailable()
+      return
+    }
     // Org hierarchy trees load progressively from /org/v2/hierarchy/read; other trees keep the framework read
-    const source$ = this.isOrgHierarchyEnabled()
-      ? this.frameworkService.loadOrgHierarchy(this.orgSelectedData, this.childOrgData)
-      : this.frameworkService.getFrameworkInfo((this.orgSelectedData) ? this.orgSelectedData : '', (this.childOrgData) ? this.childOrgData : '')
+    const source$ = this.frameworkService.loadOrgHierarchy(this.orgSelectedData, this.childOrgData)
     const selectionPath = this.pendingSelectionPath
     this.pendingSelectionPath = []
     this.restoreSelection$.next()
-    source$.subscribe(() => {
+    source$.subscribe((result: NSOrgHierarchy.IReadResult) => {
+      // An empty response means the org has no hierarchy framework yet
+      if (_.isEmpty(result)) {
+        this.onHierarchyUnavailable()
+        return
+      }
+      this.frameWorkCreated.emit(true)
       this.connectorSvc.removeAllLines()
       this.frameworkService.categoriesHash.value.forEach((cat: any) => {
         this.loaded[cat.code] = true
@@ -123,8 +135,11 @@ export class TreeViewComponent implements OnInit, OnDestroy {
       }, 500)
     }, (err) => {
       console.error('error in fetching framework', err)
+      this.onHierarchyUnavailable()
     })
+  }
 
+  private subscribeToLoader() {
     if (this.loaderSubscription) {
       this.loaderSubscription.unsubscribe()
     }
@@ -134,14 +149,13 @@ export class TreeViewComponent implements OnInit, OnDestroy {
         this.changeDetector.detectChanges()
       },
     )
-
   }
 
-  /** The org hierarchy (selected org with an org hierarchy framework) is served by the v2 hierarchy API */
-  private isOrgHierarchyEnabled(): boolean {
-    return !!(this.orgSelectedData && this.orgSelectedData.orgHierarchyFrameworkId &&
-      (this.orgSelectedData.identifier || this.orgSelectedData.id) &&
-      this.localSvc.connectionType === 'online')
+  /** The hierarchy read failed or came back empty: stop the local spinners and tell the parent there is no framework */
+  private onHierarchyUnavailable() {
+    this.isLoading = false
+    this.isFraworkLoading = false
+    this.frameWorkCreated.emit(false)
   }
 
   refreshData(resData: any) {
@@ -377,54 +391,16 @@ export class TreeViewComponent implements OnInit, OnDestroy {
     }
   }
 
-  openOrganizationDialog(column: any, _index: any, typeSelected: string) {
-    this.runWithOrgEditContext(() => this.openOrganizationDialogWithContext(column, typeSelected))
-  }
-
   /**
-   * Edit actions need the framework terms (code/identifier/associations) and the ministry/state org list.
-   * In org hierarchy mode these are not part of the page load, so they are fetched here on first use.
+   * Opens the add-organisation modal for `column`. The modal lists orgs from the unmapped-orgs API and the
+   * selection is linked via /org/v2/hierarchy/link, so no framework data is needed.
    */
-  private runWithOrgEditContext(action: () => void) {
-    if (!this.orgSelectedData) {
-      action()
-      return
-    }
-    this.treeHierarchySvc.setLoaderState(true)
-    this.frameworkService.ensureOrgEditContext(this.orgSelectedData).subscribe({
-      next: () => {
-        this.treeHierarchySvc.setLoaderState(false)
-        action()
-      },
-      error: (err: any) => {
-        console.error('error in fetching framework', err)
-        this.treeHierarchySvc.setLoaderState(false)
-        this._snackBar.open('Error in loading organisation hierarchy', 'cancel')
-      },
-    })
-  }
-
-  /** Selected cards of the other columns, as framework terms */
-  private getPreviousSelectedTermsForEdit(columnCode: string): any[] {
-    return this.frameworkService.getPreviousSelectedTerms(columnCode).map((term: any) => this.frameworkService.toFrameworkTerm(term))
-  }
-
-  /** Column info carrying the framework category code (what the edit APIs and dialogs expect) */
-  private getColumnForEdit(column: any): any {
-    if (!this.frameworkService.isOrgHierarchyMode || !column) {
-      return column
-    }
-    return { ...column, code: this.frameworkService.getFrameworkCategoryCode(column.code) }
-  }
-
-  private openOrganizationDialogWithContext(column: any, typeSelected: string) {
-    const treeListData = this.getPreviousSelectedTermsForEdit(column.code)
+  openOrganizationDialog(column: any) {
     const dialog = this.dialog.open(OrgHierarchyAddModalComponent, {
       data: {
-        previous: treeListData,
-        currentData: this.getColumnForEdit(column),
+        previous: this.getPreviousSelectedCards(column.code),
+        currentData: this.withCategoryName(column, column && column.code),
         selectedOrgData: this.orgSelectedData,
-        type: typeSelected
       },
       autoFocus: true,
       restoreFocus: true,
@@ -435,25 +411,22 @@ export class TreeViewComponent implements OnInit, OnDestroy {
       maxWidth: '100vw'
     })
 
-    dialog.afterClosed().subscribe(async (_res: any) => {
-      if (_res && _res.type === 'add') {
-        this.linkOrganisations(_res.selectedOrg, column)
-      } else if (_res && _res.type === 'update') {
-        if (_res.paparentSelectedOrg) {
-          // moving the card under another parent still uses the framework term association + publish
-          await this.updateParentAssociation(_res.paparentSelectedOrg, _res.currentTerm)
-        }
-        if (_res.selectedOrg && _res.selectedOrg.length > 0) {
-          // a changed parent is a framework edit that still needs the publish after linking
-          this.linkOrganisations(_res.selectedOrg, column, !!_res.paparentSelectedOrg)
-        } else {
-          this.publishFramework({
-            id: this.orgSelectedData.orgHierarchyFrameworkId || '',
-            category: ''
-          })
-        }
+    dialog.afterClosed().subscribe((res: any) => {
+      if (res && res.selectedOrg) {
+        this.linkOrganisations(res.selectedOrg, column)
       }
     })
+  }
+
+  /** Selected cards of the other columns as they are in the tree, labelled with their level name */
+  private getPreviousSelectedCards(columnCode: string): any[] {
+    return this.frameworkService.getPreviousSelectedTerms(columnCode).map((card: any) => this.withCategoryName(card, card.category))
+  }
+
+  /** Adds the level (column) name used as the label in the add modal; framework trees keep their category code */
+  private withCategoryName(item: any, columnCode: string): any {
+    const column = this.frameworkService.isOrgHierarchyMode ? this.frameworkService.list.get(columnCode) : null
+    return column && column.name ? { ...item, categoryName: column.name } : item
   }
 
   get list(): any[] {
@@ -705,7 +678,7 @@ export class TreeViewComponent implements OnInit, OnDestroy {
    * Parent = card selected in the previous column, or the root org for the first column
    * (same parent the old term create + association update used).
    */
-  linkOrganisations(selectedList: any[], column: any, publishAfterLink = false) {
+  linkOrganisations(selectedList: any[], column: any) {
     const parentOrgId = this.getLinkParentOrgId(column)
     const childOrgIds: string[] = _.uniq((selectedList || []).map((org: any) => org && org.identifier).filter((id: any) => !!id))
     if (!parentOrgId || !childOrgIds.length) {
@@ -718,11 +691,7 @@ export class TreeViewComponent implements OnInit, OnDestroy {
         this.onHierarchyActionError('Error in creating term', res)
         return
       }
-      if (publishAfterLink) {
-        this.publishFramework({ id: this.orgSelectedData.orgHierarchyFrameworkId || '', category: '' })
-      } else {
-        this.refreshAfterHierarchyChange()
-      }
+      this.refreshAfterHierarchyChange()
     }, (err: any) => {
       console.error('Error in linking organisation', err)
       this.onHierarchyActionError('Error in creating term', err && err.error)
@@ -832,84 +801,54 @@ export class TreeViewComponent implements OnInit, OnDestroy {
     this._snackBar.open(serverMessage || defaultMessage, 'cancel')
   }
 
-  publishFramework(frameworkData: any) {
-    this.treeHierarchySvc.publishFreamework(frameworkData).subscribe((res: any) => {
-      if (res && res.result && res.result.publishStatus) {
-        setTimeout(() => {
-          this._snackBar.open(`Organization hierarchy updated successfully`)
-          this.treeHierarchySvc.setLoaderState(false)
-          this.init()
-        }, 5000)
-      } else {
-        this._snackBar.open('Error in publishing framework', 'cancel')
-        this.treeHierarchySvc.setLoaderState(false)
-      }
-    }, (err) => {
-      console.error('Error in publishing framework', err)
-      this.treeHierarchySvc.setLoaderState(false)
-    })
-  }
-
   removeConnection(data: any) {
-    this.runWithOrgEditContext(() => this.removeConnectionWithContext(data))
+    this.removeConnectionWithContext(data)
   }
 
   private removeConnectionWithContext(data: any) {
-    const term = this.frameworkService.toFrameworkTerm(data.children)
-    const association = this.getSelectedTermsAssociation(term && term.code)
-    let count = 0
-    if (association && association.length > 0) {
-      association.forEach((assoc: any) => {
-        if (assoc.ids && assoc.ids.length > 0) {
-          count += assoc.ids.length
-        }
-      })
+    // The selected org plus all of its descendants are removed
+    const removedCount = (Number(data && data.children && data.children.childCount) || 0) + 1
+    const dialogData = {
+      dialogType: 'warning',
+      descriptions: [
+        {
+          header: `${removedCount} Organisation${removedCount > 1 ? 's' : ''} will be removed from organisation hierarchy.`,
+          headerClass: 'flex items-center justify-center text-blue',
+          messages: [
+            {
+              msgClass: 'text-blue margin-bottom-s',
+              msg: `Do you want to proceed?`,
+            },
+          ],
+        },
+      ],
+      footerClass: 'items-center justify-center',
+      buttons: [
+        {
+          btnText: 'No',
+          btnClass: 'btn-common btn-secondary',
+          response: false,
+        },
+        {
+          btnText: 'Yes',
+          btnClass: 'btn-common btn-primary',
+          response: true,
+        },
+      ],
     }
-    if (count > 0) {
-      const dialogData = {
-        dialogType: 'warning',
-        descriptions: [
-          {
-            header: `${count || 0} Organisation${count > 1 ? 's' : ''} will be removed from organisation hierarchy.`,
-            headerClass: 'flex items-center justify-center text-blue',
-            messages: [
-              {
-                msgClass: 'text-blue margin-bottom-s',
-                msg: `Do you want to proceed?`,
-              },
-            ],
-          },
-        ],
-        footerClass: 'items-center justify-center',
-        buttons: [
-          {
-            btnText: 'No',
-            btnClass: 'btn-common btn-secondary',
-            response: false,
-          },
-          {
-            btnText: 'Yes',
-            btnClass: 'btn-common btn-primary',
-            response: true,
-          },
-        ],
+    const dialogRef = this.dialog.open(ConforamtionPopupComponent, {
+      data: dialogData,
+      autoFocus: false,
+      width: '600px',
+      maxWidth: '80vw',
+      maxHeight: '90vh',
+      disableClose: true,
+    })
+    dialogRef.afterClosed().subscribe((res: any) => {
+      if (res) {
+        this.unlinkOrganisation(data.children)
       }
-      const dialogRef = this.dialog.open(ConforamtionPopupComponent, {
-        data: dialogData,
-        autoFocus: false,
-        width: '600px',
-        maxWidth: '80vw',
-        maxHeight: '90vh',
-        disableClose: true,
-      })
-      dialogRef.afterClosed().subscribe((res: any) => {
-        if (res) {
-          this.unlinkOrganisation(data.children)
-        }
-      })
-    } else {
-      this._snackBar.open(`Error in removing the organisation`, 'cancel')
-    }
+    })
   }
 
   /** Removes the org and its sub-tree from the hierarchy (POST /org/v2/hierarchy/unlink, requireLeaf=false) */
@@ -935,9 +874,6 @@ export class TreeViewComponent implements OnInit, OnDestroy {
     switch (event.action) {
       case 'remove-term':
         this.removeConnection(event.data)
-        break
-      case 'update-hierarchy':
-        this.openOrganizationDialog(this.list[this.list.findIndex((item: any) => item.code === event.data.category) + 1], '', 'update')
         break
       case 'manage-org':
         this.manageOrg.emit(event.data.children)
@@ -1013,14 +949,9 @@ export class TreeViewComponent implements OnInit, OnDestroy {
   }
 
   editCategoryName(column: any, index: any) {
-    this.runWithOrgEditContext(() => this.editCategoryNameWithContext(column, index))
-  }
-
-  private editCategoryNameWithContext(column: any, index: any) {
     const dialog = this.dialog.open(CategoryEditModuleComponent, {
       data: {
-        columnInfo: this.getColumnForEdit(column),
-        frameworkId: this.frameworkService.getFrameworkId(),
+        columnInfo: column,
         colIndex: index
       },
       width: '800px',
@@ -1029,13 +960,11 @@ export class TreeViewComponent implements OnInit, OnDestroy {
     })
     dialog.afterClosed().subscribe((res: any) => {
       if (res) {
-        const requestBody = {
-          frameworkId: this.frameworkService.getFrameworkId(),
-          categoryCode: res.column.columnData.code,
-          categoryName: res.column.formData.categoryName,
-          categoryDescription: res.column.formData.categotyDescription || ''
-        }
-        this.updateCategory(requestBody)
+        this.updateCategory({
+          level: res.column.columnData.level,
+          name: res.column.formData.categoryName || '',
+          description: res.column.formData.categotyDescription || '',
+        })
       }
     })
   }
@@ -1089,79 +1018,42 @@ export class TreeViewComponent implements OnInit, OnDestroy {
     return tempData
   }
 
-  async updateCategory(event: any) {
-    const requestBody = {
-      request: {
-        category: {
-          name: event.categoryName || '',
-          description: event.categoryDescription || '',
-        }
-      }
-    }
-    const frameworkObj = {
-      id: event.frameworkId,
-      category: event.categoryCode
+  /** Saves the edited level name/description on the L0 org (PATCH /org/v2/hierarchy/levels/{rootOrgId}) */
+  updateCategory(editedLevel: NSOrgHierarchy.ILevel) {
+    const rootOrgId = this.orgSelectedData && (this.orgSelectedData.identifier || this.orgSelectedData.id)
+    if (!rootOrgId || typeof editedLevel.level !== 'number') {
+      this._snackBar.open('Unable to update the level name')
+      return
     }
     this.treeHierarchySvc.setLoaderState(true)
-    const updateCatRes = await this.treeHierarchySvc.updateCategory(requestBody, frameworkObj).toPromise().catch((_err: any) => {
-      this.treeHierarchySvc.setLoaderState(false)
-      if (_err && _err.error && _err.error.params && _err.error.params.errMsg) {
-        this._snackBar.open(`${_err.error.params.errMsg}`)
+    this.treeHierarchySvc.updateHierarchyLevels(rootOrgId, [editedLevel]).subscribe((res: NSOrgHierarchy.IActionResponse) => {
+      const status = ((res && res.params && res.params.status) || '').toUpperCase()
+      if (status === 'SUCCESS' || status === 'SUCCESSFUL') {
+        this.refreshLevelNames()
+      } else {
+        this.treeHierarchySvc.setLoaderState(false)
+        this._snackBar.open((res && res.params && res.params.errmsg) || 'Unable to update the level name')
       }
+    }, (err: any) => {
+      this.treeHierarchySvc.setLoaderState(false)
+      const params = err && err.error && err.error.params
+      this._snackBar.open((params && (params.errmsg || params.errMsg)) || 'Unable to update the level name')
     })
-    if (updateCatRes && updateCatRes.params && updateCatRes.params.status.toLowerCase() === 'successful') {
-      await this.publishFramework(frameworkObj)
-    }
   }
 
-  async updateParentAssociation(selectedParent: any, currentTerm: any) {
-    const framworkData = _.cloneDeep(this.frameworkService.completeResponse)
-    const parentCategoryData = framworkData.categories.find((cat: any) => cat.code === selectedParent.category)
-    if (parentCategoryData && parentCategoryData.terms && parentCategoryData.terms.length > 0) {
-      const currentParentTerm = parentCategoryData.terms.find((term: any) => {
-        if (term.associations && term.associations.length > 0) {
-          return term.associations.some((assoc: any) => assoc.code === currentTerm.code)
-        }
-      })
-      if (currentParentTerm) {
-        const updateOldParentAssociation: any = {
-          request: {
-            term: {
-              associations: []
-            }
-          }
-        }
-        currentParentTerm.associations.forEach((assoc: any) => {
-          if (assoc.code !== currentTerm.code) {
-            updateOldParentAssociation.request.term.associations.push({ identifier: assoc.identifier })
-          }
-        })
-        await this.updateHierarchyAssocication(updateOldParentAssociation, framworkData.identifier, currentParentTerm)
-      }
-      selectedParent = parentCategoryData.terms.find((term: any) => term.code === selectedParent.code)
-      const updateNewParentAssociation: any = {
-        request: {
-          term: {
-            associations: []
-          }
-        }
-      }
-      if (selectedParent && selectedParent.associations && selectedParent.associations.length > 0) {
-        selectedParent.associations.forEach((assoc: any) => {
-          updateNewParentAssociation.request.term.associations.push({ identifier: assoc.identifier })
-        })
-      }
-      updateNewParentAssociation.request.term.associations.push({ identifier: currentTerm.identifier })
-      await this.updateHierarchyAssocication(updateNewParentAssociation, framworkData.identifier, selectedParent)
-    }
-  }
-
-  async updateHierarchyAssocication(requestBody: any, frameworkId: any, termData: any) {
-    this.treeHierarchySvc.setLoaderState(true)
-    await this.treeHierarchySvc.updateFrameworkAssociation(requestBody, { id: frameworkId, category: termData.category }, termData.code).toPromise().catch((err: any) => {
-      console.error('Error in updating association', err)
+  /** Reads the hierarchy of the L0 org (even for a child org admin) and shows its updated level names in the column headers */
+  private refreshLevelNames() {
+    const l0OrgId = this.orgSelectedData && (this.orgSelectedData.identifier || this.orgSelectedData.id)
+    if (!l0OrgId || !this.frameworkService.isOrgHierarchyMode) {
       this.treeHierarchySvc.setLoaderState(false)
-      this._snackBar.open(`Error in updating association`, 'cancel')
+      return
+    }
+    this.frameworkService.refreshLevelNames(l0OrgId).subscribe(() => {
+      this.treeHierarchySvc.setLoaderState(false)
+      this._snackBar.open('Level name updated successfully')
+    }, (err: any) => {
+      console.error('error in fetching updated level names', err)
+      this.treeHierarchySvc.setLoaderState(false)
     })
   }
 

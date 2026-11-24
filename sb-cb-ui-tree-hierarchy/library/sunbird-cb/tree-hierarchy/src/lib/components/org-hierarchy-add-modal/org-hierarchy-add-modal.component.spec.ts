@@ -53,21 +53,14 @@ describe('OrgHierarchyAddModalComponent', () => {
     snackBarSpy = jasmine.createSpyObj('MatSnackBar', ['open']);
     frameworkServiceMock = {
       getUnmappedOrgs: jasmine.createSpy('getUnmappedOrgs').and.returnValue(page([apiOrg('o1', 'Beta Org'), apiOrg('o2', 'Alpha Org')], 0, 120)),
-      completeResponse: {
-        categories: [
-          { code: 'ministry', terms: [{ code: 'm1', name: 'Ministry One', additionalProperties: { orgId: 'o3' } }] },
-          { code: 'department', terms: [] },
-        ],
-      },
     };
   });
 
   describe('add mode', () => {
     beforeEach(() => {
       setup({
-        type: 'add',
-        previous: [{ category: 'ministry', code: 'm1', name: 'Ministry One' }],
-        currentData: { code: 'department' },
+        previous: [{ category: 'level2', categoryName: 'Ministry', code: 'm1', name: 'Ministry One' }],
+        currentData: { code: 'level3', categoryName: 'Department' },
         selectedOrgData,
       });
     });
@@ -223,65 +216,18 @@ describe('OrgHierarchyAddModalComponent', () => {
       component.selectedOrgsControl.setValue(['o2']);
       component.onOrgSelectOpenedChange(false, selectStub().select);
       component.onSave();
-      expect(dialogRefSpy.close).toHaveBeenCalledWith({
-        selectedOrg: [option('o2', 'Alpha Org')],
-        paparentSelectedOrg: undefined,
-        currentTerm: dialogData.previous[0],
-        type: 'add',
-      });
+      expect(dialogRefSpy.close).toHaveBeenCalledWith({ selectedOrg: [option('o2', 'Alpha Org')] });
+    });
+
+    it('should label the levels with their level name', () => {
+      const labels = Array.from(fixture.nativeElement.querySelectorAll('.orgTypeName')).map((el: any) => el.textContent.trim());
+      expect(labels).toContain('ministry');
+      expect(labels).toContain('department');
     });
 
     it('should close the dialog on close', () => {
       component.onClose();
       expect(dialogRefSpy.close).toHaveBeenCalledWith();
-    });
-  });
-
-  describe('update mode', () => {
-    beforeEach(() => {
-      setup({
-        type: 'update',
-        previous: [
-          { category: 'ministry', code: 'm1', name: 'Ministry One' },
-          { category: 'department', code: 'd1', name: 'Dept One' },
-        ],
-      });
-    });
-
-    it('should load parent terms from the previous category', () => {
-      expect(component.parentFilteredOptions).toEqual(frameworkServiceMock.completeResponse.categories[0].terms);
-    });
-
-    it('should filter parent options by name', () => {
-      component.filterParentOptions('none');
-      expect(component.parentFilteredOptions).toEqual([]);
-      component.filterParentOptions('');
-      expect(component.parentFilteredOptions.length).toBe(1);
-    });
-
-    it('should require an organisation or parent before saving', () => {
-      component.onSave();
-      expect(snackBarSpy.open).toHaveBeenCalledWith('Please select at least one organization or parent organization');
-      expect(dialogRefSpy.close).not.toHaveBeenCalled();
-    });
-
-    it('should not allow the parent to be selected as a child', () => {
-      component.selectedOrgsControl.setValue(['m1']);
-      component.parentSelectedOrgControl.setValue('m1');
-      component.onSave();
-      expect(snackBarSpy.open).toHaveBeenCalledWith('You cannot select the parent organization as a child organization');
-      expect(dialogRefSpy.close).not.toHaveBeenCalled();
-    });
-
-    it('should close with the selected parent on save', () => {
-      component.parentSelectedOrgControl.setValue('m1');
-      component.onSave();
-      expect(dialogRefSpy.close).toHaveBeenCalledWith({
-        selectedOrg: [],
-        paparentSelectedOrg: frameworkServiceMock.completeResponse.categories[0].terms[0],
-        currentTerm: dialogData.previous[1],
-        type: 'update',
-      });
     });
   });
 });

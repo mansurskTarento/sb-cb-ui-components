@@ -14,13 +14,13 @@ const API_ENDPOINT = {
   UPDATE_ASSOCIATION: `/apis/proxies/v8/framework/v1/term/update/`,
   PUBLISH_FRAMEWORK: `/apis/proxies/v8/framework/v1/publish/`,
   RETIRE_TREM: `/apis/proxies/v8/framework/v1/term/retire`,
-  UPDATE_CATEGORY: `/apis/proxies/v8/framework/v1/category/update/`,
   USERS_SEARCH: `apis/proxies/v8/user/v1/search`,
   ORG_CONTENT_UPDATE: `/apis/proxies/v8/org/ext/v2/update`,
   ORG_HIERARCHY_LINK: `/apis/proxies/v8/org/v2/hierarchy/link`,
   ORG_HIERARCHY_UNLINK: `/apis/proxies/v8/org/v2/hierarchy/unlink`,
   ORG_HIERARCHY_ORG_LOOKUP: `/apis/proxies/v8/org/v2/hierarchy/org-lookup`,
   ORG_HIERARCHY_MOVE: `/apis/proxies/v8/org/v2/hierarchy/move`,
+  ORG_HIERARCHY_LEVELS: `/apis/proxies/v8/org/v2/hierarchy/levels/`,
 }
 @Injectable({
   providedIn: 'root'
@@ -69,6 +69,7 @@ export class TreeHierarchyService {
     return this.http.patch(`${API_ENDPOINT.UPDATE_TERMS}/${codeId}?framework=${frameworkObj.id}&category=${frameworkObj.category}`, requestBody);
   }
 
+  /** @deprecated org hierarchy re-parenting uses the move dialog; no longer called by the library */
   updateFrameworkAssociation(requestBody: any, frameworkObj:any, codeId:any): Observable<any> {
     return this.http.patch(`${API_ENDPOINT.UPDATE_ASSOCIATION}${codeId}?framework=${frameworkObj.id}&category=${frameworkObj.category}`, requestBody);
   }
@@ -90,8 +91,14 @@ export class TreeHierarchyService {
     return this.http.patch(`${API_ENDPOINT.ORG_CONTENT_UPDATE}`, requestBody);
   }
 
-  updateCategory(requestBody: any, frameworkObj:any): Observable<any> {
-    return this.http.patch(`${API_ENDPOINT.UPDATE_CATEGORY}${frameworkObj.category}?framework=${frameworkObj.id}`, requestBody);
+  /** Updates the name/description of hierarchy levels of the L0 org (PATCH /org/v2/hierarchy/levels/{rootOrgId}) */
+  updateHierarchyLevels(rootOrgId: string, levels: NSOrgHierarchy.ILevel[]): Observable<NSOrgHierarchy.IActionResponse> {
+    const requestBody: NSOrgHierarchy.IUpdateLevelsRequest = {
+      request: { levels }
+    }
+    return this.http.patch<NSOrgHierarchy.IActionResponse>(
+      `${API_ENDPOINT.ORG_HIERARCHY_LEVELS}${encodeURIComponent(rootOrgId)}`, requestBody
+    )
   }
 
   getUsersSearch(requestBody: any): Observable<any> {

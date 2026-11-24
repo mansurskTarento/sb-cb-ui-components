@@ -85,7 +85,6 @@ export class FrameworkService {
   // ---- Org hierarchy (v2 API, server-side paging/search) ----
   /** true while the tree is driven by /org/v2/hierarchy/read instead of the framework read */
   isOrgHierarchyMode = false;
-  private hierarchyChildOrg: any = null;
   private hierarchyStates = new Map<string, NSOrgHierarchy.IColumnState>();
   private hierarchyEvents = new Map<string, BehaviorSubject<NSOrgHierarchy.IColumnEvent | null>>();
   private hierarchyRequests = new Map<string, Subject<IHierarchyPageRequest>>();
@@ -607,7 +606,6 @@ export class FrameworkService {
         this.isOrgHierarchyMode = true
         this.completeResponse = null
         this.frameworkId = orgData?.orgHierarchyFrameworkId || ''
-        this.hierarchyChildOrg = childOrgId ? childOrgData : null
         this.buildHierarchyColumns(result, rootId, !!childOrgId)
       }),
       catchError((err) => {
@@ -617,6 +615,39 @@ export class FrameworkService {
         return throwError(err)
       })
     )
+  }
+
+  /**
+   * Re-reads the hierarchy of the L0 org and applies the returned level names/descriptions to the tree columns
+   * (e.g. after a level was renamed). Only the column headers change; loaded records and selections are kept.
+   */
+  refreshLevelNames(l0OrgId: string): Observable<NSOrgHierarchy.ILevel[]> {
+    return this.readOrgHierarchy(l0OrgId, { offset: 0, limit: 1 }).pipe(
+      map((result: NSOrgHierarchy.IReadResult) => result.levels || []),
+      tap((levels: NSOrgHierarchy.ILevel[]) => this.applyLevelNames(levels))
+    )
+  }
+
+  /** Updates the name/description of each column whose level is in `levels` */
+  applyLevelNames(levels: NSOrgHierarchy.ILevel[]): void {
+    if (!this.isOrgHierarchyMode || !levels || !levels.length) {
+      return
+    }
+    let changed = false
+    this.list.forEach((column: NSFramework.IColumnView) => {
+      const lvl = levels.find(l => l && l.level === column.level)
+      if (lvl && lvl.name && (lvl.name !== column.name || lvl.description !== column.description)) {
+        column.name = lvl.name
+        column.description = lvl.description
+        changed = true
+      }
+    })
+    if (changed) {
+      this.categoriesHash.next(this.categoriesHash.value.map((cat: NSFramework.ICategory) => {
+        const column = this.list.get(cat.code)
+        return column ? { ...cat, name: column.name, description: column.description } : cat
+      }))
+    }
   }
 
   /** Event stream (current value replayed) for one column's hierarchy state */
@@ -720,46 +751,12 @@ export class FrameworkService {
     this.hierarchyGenerations.clear()
     this.hierarchyEvents.forEach(subject => subject.complete())
     this.hierarchyEvents.clear()
-    this.hierarchyChildOrg = null
   }
 
   /** Cancels every pending hierarchy page / user-count request */
   private cancelHierarchyRequests(): void {
     this.hierarchyReset$.next()
     this.hierarchyRequests.clear()
-  }
-
-  /**
-   * Add / update hierarchy / remove connection / edit level need the framework terms (code, identifier,
-   * associations). They are fetched only when such an action is used. The organisations offered in the
-   * add-organisation modal are fetched by the modal itself (getUnmappedOrgs).
-   */
-  ensureOrgEditContext(orgData: any): Observable<void> {
-    if (this.completeResponse) {
-      return of(undefined)
-    }
-    const frameworkId = orgData?.orgHierarchyFrameworkId || this.frameworkId
-    return this.getFrameworkRead(frameworkId).pipe(
-      map((framework: any) => {
-        if (!framework || !Array.isArray(framework.categories)) {
-          throw new Error('Organisation hierarchy framework not found')
-        }
-        let categories = _.sortBy(framework.categories, 'index')
-        if (this.hierarchyChildOrg) {
-          categories = this.getOrgFromChildOnwards(categories, this.hierarchyChildOrg)
-        }
-        categories.forEach((category: any) => {
-          (category.terms || []).forEach((term: any) => {
-            // same shape formateData produced: children = associations
-            if (term.associations && term.associations.length > 0) {
-              term.children = term.associations
-            }
-          })
-        })
-        framework.categories = categories
-        this.completeResponse = framework
-      })
-    )
   }
 
   /** Framework category code behind a tree column (columns are built from hierarchy levels) */

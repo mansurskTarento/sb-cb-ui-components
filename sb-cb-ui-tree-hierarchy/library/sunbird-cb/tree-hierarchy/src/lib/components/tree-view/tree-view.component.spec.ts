@@ -17,7 +17,7 @@ describe('TreeViewComponent', () => {
   let fixture: ComponentFixture<TreeViewComponent>;
   let frameworkService: FrameworkService;
   let approvalService: ApprovalService;
-  let getFrameworkInfoSpy: jasmine.Spy;
+  let loadOrgHierarchySpy: jasmine.Spy;
 
   const boardColumn: any = {
     code: 'board', index: 1, name: 'Board', config: {},
@@ -46,7 +46,7 @@ describe('TreeViewComponent', () => {
   beforeEach(() => {
     frameworkService = TestBed.inject(FrameworkService);
     approvalService = TestBed.inject(ApprovalService);
-    getFrameworkInfoSpy = spyOn(frameworkService, 'getFrameworkInfo').and.returnValue(of({}));
+    loadOrgHierarchySpy = spyOn(frameworkService, 'loadOrgHierarchy').and.returnValue(of({} as any));
     fixture = TestBed.createComponent(TreeViewComponent);
     component = fixture.componentInstance;
   });
@@ -61,18 +61,21 @@ describe('TreeViewComponent', () => {
     expect(component).toBeTruthy();
   });
 
-  it('should load the framework on init and show the loading message while the list is empty', () => {
+  it('should not call the hierarchy API and report no framework when no org is selected', () => {
+    const emitted: boolean[] = [];
+    component.frameWorkCreated.subscribe(v => emitted.push(v));
     fixture.detectChanges();
-    expect(getFrameworkInfoSpy).toHaveBeenCalledWith('', '');
+    expect(loadOrgHierarchySpy).not.toHaveBeenCalled();
+    expect(emitted).toEqual([false]);
     expect(component.isLoading).toBe(false);
-    expect(fixture.nativeElement.querySelector('h1').textContent).toContain(component.app_strings.loading);
+    expect(component.isFraworkLoading).toBe(false);
   });
 
-  it('should pass the selected org data when loading the framework', () => {
+  it('should pass the selected org data when loading the hierarchy', () => {
     component.orgSelectedData = { id: 'org1' };
     component.childOrgData = { rootOrgId: 'org1' };
     fixture.detectChanges();
-    expect(getFrameworkInfoSpy).toHaveBeenCalledWith({ id: 'org1' }, { rootOrgId: 'org1' });
+    expect(loadOrgHierarchySpy).toHaveBeenCalledWith({ id: 'org1' }, { rootOrgId: 'org1' });
   });
 
   it('should push the environment and taxonomy config to the framework service', () => {
@@ -213,10 +216,8 @@ describe('TreeViewComponent', () => {
 
   describe('org hierarchy (v2) mode', () => {
     const orgData = { identifier: 'root', id: 'root', orgHierarchyFrameworkId: 'fw_root' };
-    let loadOrgHierarchySpy: jasmine.Spy;
 
     beforeEach(() => {
-      loadOrgHierarchySpy = spyOn(frameworkService, 'loadOrgHierarchy').and.returnValue(of({} as any));
       component.orgSelectedData = orgData;
       component.childOrgData = { id: 'root' };
     });
@@ -225,17 +226,43 @@ describe('TreeViewComponent', () => {
       frameworkService.isOrgHierarchyMode = false;
     });
 
-    it('should load the hierarchy through the v2 API instead of the framework read', () => {
+    it('should load the hierarchy through the v2 API', () => {
       fixture.detectChanges();
       expect(loadOrgHierarchySpy).toHaveBeenCalledWith(orgData, { id: 'root' });
-      expect(getFrameworkInfoSpy).not.toHaveBeenCalled();
     });
 
-    it('should keep using the framework read when the org has no hierarchy framework', () => {
+    it('should load the hierarchy even when the org has no orgHierarchyFrameworkId', () => {
       component.orgSelectedData = { identifier: 'root' };
       fixture.detectChanges();
-      expect(getFrameworkInfoSpy).toHaveBeenCalled();
-      expect(loadOrgHierarchySpy).not.toHaveBeenCalled();
+      expect(loadOrgHierarchySpy).toHaveBeenCalled();
+    });
+
+    it('should emit frameWorkCreated true when the hierarchy read returns data', () => {
+      loadOrgHierarchySpy.and.returnValue(of({ identifier: 'root', associations: [] } as any));
+      const emitted: boolean[] = [];
+      component.frameWorkCreated.subscribe(v => emitted.push(v));
+      fixture.detectChanges();
+      expect(emitted).toEqual([true]);
+    });
+
+    it('should emit frameWorkCreated false when the hierarchy read is empty', () => {
+      const emitted: boolean[] = [];
+      component.frameWorkCreated.subscribe(v => emitted.push(v));
+      fixture.detectChanges();
+      expect(emitted).toEqual([false]);
+      expect(component.isFraworkLoading).toBe(false);
+    });
+
+    it('should emit frameWorkCreated false and stop loading when the hierarchy read fails', () => {
+      spyOn(console, 'error');
+      loadOrgHierarchySpy.and.returnValue(throwError(() => new Error('no framework')));
+      const emitted: boolean[] = [];
+      component.frameWorkCreated.subscribe(v => emitted.push(v));
+      component.isLoading = true;
+      fixture.detectChanges();
+      expect(emitted).toEqual([false]);
+      expect(component.isLoading).toBe(false);
+      expect(component.isFraworkLoading).toBe(false);
     });
 
     it('should not stack loader subscriptions when init runs again', () => {
@@ -286,16 +313,36 @@ describe('TreeViewComponent', () => {
       expect(assocSpy).toHaveBeenCalledWith('T_A');
     });
 
-    it('should show an error and not open the dialog when the framework terms cannot be loaded', () => {
+    it('should show an error and not open the remove confirmation when the framework terms cannot be loaded', () => {
       frameworkService.isOrgHierarchyMode = true;
       spyOn(frameworkService, 'ensureOrgEditContext').and.returnValue(throwError(new Error('x')));
       const snackBar = TestBed.inject(MatSnackBar);
       spyOn(snackBar, 'open');
       spyOn(console, 'error');
       const dialogSpy = spyOn(component.dialog, 'open');
-      component.openOrganizationDialog({ code: 'level2' }, 0, 'add');
+      component.removeConnection({ children: { identifier: 'a', additionalProperties: { orgId: 'a' } } });
       expect(dialogSpy).not.toHaveBeenCalled();
       expect(snackBar.open).toHaveBeenCalledWith('Error in loading organisation hierarchy', 'cancel');
+    });
+
+    it('should open the add dialog without reading the framework', () => {
+      frameworkService.isOrgHierarchyMode = true;
+      frameworkService.list.set('level2', { code: 'level2', name: 'Ministry', index: 1 } as any);
+      frameworkService.list.set('level3', { code: 'level3', name: 'Department', index: 2 } as any);
+      frameworkService.selectionList.set('level2', { identifier: 'a', name: 'A', category: 'level2' });
+      const ensureSpy = spyOn(frameworkService, 'ensureOrgEditContext');
+      const readSpy = spyOn(frameworkService, 'getFrameworkRead');
+      const dialogSpy = spyOn(component.dialog, 'open').and.returnValue({ afterClosed: () => of({ selectedOrg: [{ identifier: 'o1' }] }) } as any);
+      const linkSpy = spyOn(component, 'linkOrganisations');
+      const column = frameworkService.list.get('level3');
+      component.openOrganizationDialog(column);
+      expect(ensureSpy).not.toHaveBeenCalled();
+      expect(readSpy).not.toHaveBeenCalled();
+      expect(linkSpy).toHaveBeenCalledWith([{ identifier: 'o1' }], column);
+      const data = (dialogSpy.calls.mostRecent().args[1] as any).data;
+      expect(data.previous).toEqual([{ identifier: 'a', name: 'A', category: 'level2', categoryName: 'Ministry' }]);
+      expect(data.currentData.code).toBe('level3');
+      expect(data.currentData.categoryName).toBe('Department');
     });
 
     describe('link / unlink', () => {
@@ -329,14 +376,6 @@ describe('TreeViewComponent', () => {
         const linkSpy = spyOn(treeSvc, 'linkOrgHierarchy').and.returnValue(of(success as any));
         component.linkOrganisations([{ identifier: 'o1' }], { code: 'level2' });
         expect(linkSpy).toHaveBeenCalledWith('root', ['o1']);
-      });
-
-      it('should publish after linking when the parent was also changed (update hierarchy)', () => {
-        spyOn(treeSvc, 'linkOrgHierarchy').and.returnValue(of(success as any));
-        const publishSpy = spyOn(component, 'publishFramework');
-        frameworkService.selectionList.set('level2', { identifier: 'a', additionalProperties: { orgId: 'a' } });
-        component.linkOrganisations([{ identifier: 'o1' }], { code: 'level3' }, true);
-        expect(publishSpy).toHaveBeenCalledWith({ id: 'fw_root', category: '' });
       });
 
       it('should show the server error and stop the loader when linking fails', () => {

@@ -46,6 +46,13 @@ export namespace NSOrgHierarchy {
     }
   }
 
+  /** Request body for PATCH /org/v2/hierarchy/levels/{rootOrgId} */
+  export interface IUpdateLevelsRequest {
+    request: {
+      levels: ILevel[]
+    }
+  }
+
   /** Response of link / unlink */
   export interface IActionResponse {
     id: string

@@ -77,10 +77,12 @@ describe('TreeHierarchyService', () => {
     call.flush({});
   });
 
-  it('updateCategory should PATCH the category update url', () => {
-    service.updateCategory({}, frameworkObj).subscribe();
-    const call = httpMock.expectOne('/apis/proxies/v8/framework/v1/category/update/cat1?framework=fw1');
+  it('updateHierarchyLevels should PATCH the levels of the root org', () => {
+    const levels = [{ level: 1, name: 'Ministry', description: 'Central Government Ministry' }];
+    service.updateHierarchyLevels('org1', levels).subscribe();
+    const call = httpMock.expectOne('/apis/proxies/v8/org/v2/hierarchy/levels/org1');
     expect(call.request.method).toBe('PATCH');
+    expect(call.request.body).toEqual({ request: { levels } });
     call.flush({});
   });
 
