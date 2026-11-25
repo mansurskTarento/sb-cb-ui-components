@@ -64,6 +64,7 @@ export class TreeViewComponent implements OnInit, OnDestroy {
   dataConfig: any
   isFraworkLoading = true
   loaderSubscription!: Subscription
+  maxCreatedLevel: number = 0
   private afterAddOrEditSubscription: Subscription | undefined
   private cardClickSubscription: Subscription | undefined
   /** Org ids of the selected cards (in column order) to select again once the tree has reloaded */
@@ -120,6 +121,7 @@ export class TreeViewComponent implements OnInit, OnDestroy {
         this.onHierarchyUnavailable()
         return
       }
+      this.maxCreatedLevel = _.get(result, 'maxCreatedLevel', 0)
       this.frameWorkCreated.emit(true)
       this.connectorSvc.removeAllLines()
       this.frameworkService.categoriesHash.value.forEach((cat: any) => {
@@ -920,7 +922,8 @@ export class TreeViewComponent implements OnInit, OnDestroy {
       // the tree columns are the hierarchy levels (up to maxAllowedLevel)
       levels: Array.from(this.frameworkService.list.values())
         .filter(column => typeof column.level === 'number')
-        .map(column => ({ level: column.level as number, name: column.name })),
+        .map(column => ({ level: column.level as number, name: column.name }))
+        .slice(0, this.maxCreatedLevel + 1),
     }
 
     const dialogRef = this.dialog.open<MoveTermComponent, NSOrgHierarchy.IMoveDialogData, NSOrgHierarchy.IMoveDialogResult>(

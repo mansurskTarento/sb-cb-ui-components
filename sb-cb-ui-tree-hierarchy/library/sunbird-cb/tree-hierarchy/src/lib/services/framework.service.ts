@@ -569,14 +569,14 @@ export class FrameworkService {
   // ===========================================================================
 
   /** POST /org/v2/hierarchy/read/{orgId}. Errors (HTTP or params.status !== SUCCESS) are thrown. */
-  readOrgHierarchy(orgId: string, page: { offset: number, limit: number, query?: string }): Observable<NSOrgHierarchy.IReadResult> {
+  readOrgHierarchy(orgId: string, page: { offset: number, limit: number, query?: string }, levelRequired = false): Observable<NSOrgHierarchy.IReadResult> {
     const body: NSOrgHierarchy.IReadRequest = {
       request: {
         query: (page.query || '').trim(),
         limit: page.limit,
         offset: page.offset,
         countDescendants: false,
-        levelRequired: true,
+        levelRequired: levelRequired,
       }
     }
     return this.http.post<NSOrgHierarchy.IReadResponse>(`${API_ENDPOINT.ORG_HIERARCHY_READ_V2}${encodeURIComponent(orgId)}`, body).pipe(
@@ -599,7 +599,7 @@ export class FrameworkService {
     this.cancelHierarchyRequests()
     const childOrgId = this.getChildOrgId(orgData, childOrgData)
     const rootId: string = childOrgId || orgData?.identifier || orgData?.id || ''
-    return this.readOrgHierarchy(rootId, { offset: 0, limit: HIERARCHY_PAGE_LIMIT }).pipe(
+    return this.readOrgHierarchy(rootId, { offset: 0, limit: HIERARCHY_PAGE_LIMIT }, true).pipe(
       tap((result: NSOrgHierarchy.IReadResult) => {
         this.resetAll()
         this.resetHierarchyState()
@@ -622,7 +622,7 @@ export class FrameworkService {
    * (e.g. after a level was renamed). Only the column headers change; loaded records and selections are kept.
    */
   refreshLevelNames(l0OrgId: string): Observable<NSOrgHierarchy.ILevel[]> {
-    return this.readOrgHierarchy(l0OrgId, { offset: 0, limit: 1 }).pipe(
+    return this.readOrgHierarchy(l0OrgId, { offset: 0, limit: 1 }, true).pipe(
       map((result: NSOrgHierarchy.IReadResult) => result.levels || []),
       tap((levels: NSOrgHierarchy.ILevel[]) => this.applyLevelNames(levels))
     )
